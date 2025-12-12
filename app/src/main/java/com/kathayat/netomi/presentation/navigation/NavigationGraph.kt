@@ -22,7 +22,7 @@ fun NavigationGraph(
     ) {
         composable("chat_list") {
             ChatListScreen(
-                innerPadding,
+                innerPaddingValues = innerPadding,
                 onChatOpen = { chatId ->
                     navController.navigate("chat_room/$chatId")
                 }
@@ -39,7 +39,7 @@ fun NavigationGraph(
             val chatId = entry.arguments?.getInt("chatId") ?: 0
 
             ChatRoomScreen(
-                innerPadding,
+                innerPaddingValues = innerPadding,
                 chatId = chatId,
                 onBack = { navController.popBackStack() }
             )

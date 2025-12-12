@@ -1,6 +1,7 @@
 package com.kathayat.netomi.presentation.vm
 
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kathayat.netomi.data.local.ChatEntity
@@ -11,8 +12,11 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import jakarta.inject.Inject
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 @HiltViewModel
@@ -21,8 +25,9 @@ class ChatListViewModel @Inject constructor(
     @ApplicationContext private val ctx: Context
 ) : ViewModel() {
 
-    private val _chats = MutableStateFlow<List<ChatEntity>>(emptyList())
-    val chats = _chats.asStateFlow()
+    // Expose a Flow of ChatEntity from DB so UI is reactive
+    val chatsFlow: StateFlow<List<ChatEntity>> = repo.observeChats()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _navigateToChat = MutableSharedFlow<Int>()
     val navigateToChat = _navigateToChat.asSharedFlow()
@@ -31,71 +36,46 @@ class ChatListViewModel @Inject constructor(
     val error = _error.asSharedFlow()
 
     private val connectivity = ConnectivityObserver(ctx)
-
     private val _isOnline = MutableStateFlow(true)
     val isOnline = _isOnline.asStateFlow()
 
     init {
         repo.connectSocket()
-        observeIncomingMessages()
+        observeIncomingSafe()
         observeConnectivity()
-        loadChats()
+        Log.d("SoketConnection", "is soket conneted ${repo.isSocketConnected.value}")
     }
 
     fun createNewChat() {
         viewModelScope.launch {
-            val newChatId = repo.createChat("Chat Bot ${System.currentTimeMillis()}")
-            loadChats()
-            _navigateToChat.emit(newChatId.toInt())
+            val id = repo.createChat("Chat ${System.currentTimeMillis()}")
+            _navigateToChat.emit(id.toInt())
         }
     }
 
-    // LOAD CHATS LIST
-    fun loadChats() {
+    private fun observeIncomingSafe() {
+        // Listen to incoming socket messages and route them to the latest chat (or create one)
         viewModelScope.launch {
-            _chats.value = repo.getAllChats()
-        }
-    }
-
-    // INCOMING SOCKET MESSAGES
-    private fun observeIncomingMessages() {
-        viewModelScope.launch {
-            repo.incomingMessages().collect { rawMessage ->
-
-                // 1. Try to get the latest chat
-                val existingChat = repo.getAllChats().lastOrNull()
-
-                val chatId = if (existingChat != null) {
-                    existingChat.chatId
-                } else {
-                    // 2. If no chat exists → create one automatically
-                    val newId = repo.createChat("New Chat")
-                    newId.toInt()
+            repo.incomingMessages().collect { raw ->
+                try {
+                    val currentChats = repo.getAllChats()
+                    val chatId = currentChats.lastOrNull()?.chatId ?: repo.createChat("Auto Chat").toInt()
+                    repo.saveIncoming(chatId, "Bot", raw)
+                } catch (e: Exception) {
+                    _error.emit("Incoming save error: ${e.localizedMessage}")
                 }
-
-                repo.saveIncoming(
-                    chatId = chatId,
-                    sender = "Bot",
-                    message = rawMessage
-                )
-
-                loadChats()
             }
         }
     }
 
-
-    // CONNECTIVITY
     private fun observeConnectivity() {
         connectivity.start()
         viewModelScope.launch {
             connectivity.isConnected.collect { connected ->
                 _isOnline.value = connected == true
-
                 if (connected == true) {
                     try {
                         repo.retryPending()
-                        loadChats()
                     } catch (e: Exception) {
                         _error.emit("Retry failed: ${e.localizedMessage}")
                     }
@@ -104,15 +84,7 @@ class ChatListViewModel @Inject constructor(
         }
     }
 
-    // CLEAR ALL CHATS ON DESTROY
-    fun clearAllChatsOnClose() {
+    fun clearAllChatsNow() {
         viewModelScope.launch { repo.clearChats() }
     }
-
-    override fun onCleared() {
-        super.onCleared()
-        connectivity.stop()
-        repo.closeSocket()
-    }
 }
-

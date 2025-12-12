@@ -2,6 +2,7 @@ package com.kathayat.netomi.presentation.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -25,6 +26,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -43,149 +45,96 @@ import kotlin.text.ifEmpty
 
 @Composable
 fun ChatListScreen(
-    innerPadding: PaddingValues,
+    innerPaddingValues: PaddingValues,
     viewModel: ChatListViewModel = hiltViewModel(),
     onChatOpen: (Int) -> Unit
 ) {
-    val chats by viewModel.chats.collectAsState()
+    val chats by viewModel.chatsFlow.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    val lifecycleOwner = LocalLifecycleOwner.current
 
     LaunchedEffect(Unit) {
-        viewModel.navigateToChat.collect { chatId ->
-            onChatOpen(chatId)
-        }
-    }
-
-    LaunchedEffect(lifecycleOwner) {
-        lifecycleOwner.lifecycle.addObserver(
-            object : DefaultLifecycleObserver {
-                override fun onResume(owner: LifecycleOwner) {
-                    viewModel.loadChats()
-                }
-            }
-        )
+        viewModel.error.collect { snackbarHostState.showSnackbar(it) }
     }
 
     LaunchedEffect(Unit) {
-        viewModel.error.collect { msg ->
-            snackbarHostState.showSnackbar(msg)
-        }
+        viewModel.navigateToChat.collect { chatId -> onChatOpen(chatId) }
     }
 
     Scaffold(
-        modifier = Modifier.padding(innerPadding),
+        modifier = Modifier.padding(innerPaddingValues),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { viewModel.createNewChat() }
+                onClick = { viewModel.createNewChat() },
+                modifier = Modifier.padding(bottom = 20.dp)
             ) {
                 Icon(Icons.Default.Add, contentDescription = "New Chat")
             }
         }
     ) { padding ->
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .padding(12.dp)
         ) {
-
-            Text(
-                text = "Chats",
-                style = MaterialTheme.typography.headlineSmall
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Chats", style = MaterialTheme.typography.headlineSmall)
+                TextButton(
+                    onClick = {
+                        viewModel.clearAllChatsNow()
+                    },
+                  ) {
+                    Text("Clear All Chats")
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
 
             if (chats.isEmpty()) {
-                EmptyChatState(viewModel)
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No chats. Tap + to create one.")
+                }
             } else {
-                ChatList(chats = chats, onChatOpen = onChatOpen)
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(chats) { chat ->
+                        ChatListItem(chat) { onChatOpen(chat.chatId) }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-fun EmptyChatState(viewModel: ChatListViewModel) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("No Chats Available")
-            Spacer(Modifier.height(8.dp))
-
-            Button(onClick = {
-                viewModel.createNewChat()   // ⬅ NEW
-            }) {
-                Text("Start Chat")
-            }
-        }
-    }
-}
-
-@Composable
-fun ChatList(
-    chats: List<ChatEntity>,
-    onChatOpen: (Int) -> Unit
-) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        items(chats) { chat ->
-            ChatListItem(chat = chat) {
-                onChatOpen(chat.chatId)
-            }
-        }
-    }
-}
-
-@Composable
-fun ChatListItem(
-    chat: ChatEntity,
-    onClick: () -> Unit
-) {
+fun ChatListItem(chat: ChatEntity, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
-            .padding(vertical = 10.dp, horizontal = 8.dp),
+            .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-
+            Text("Chat Bot", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = chat.chatName,
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Text(
-                text = chat.lastMessage,
+                chat.lastMessage.ifEmpty { "No messages yet" },
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1
             )
         }
-
         if (chat.unreadCount > 0) {
             Box(
                 modifier = Modifier
-                    .size(14.dp)
+                    .size(16.dp)
                     .background(
-                        color = MaterialTheme.colorScheme.primary,
-                        shape = CircleShape
+                        MaterialTheme.colorScheme.primary,
+                        shape = MaterialTheme.shapes.small
                     )
             )
         }
     }
-}
-
-fun lastMessage(lastMessage:String):String {
-    var message = ""
-    if (lastMessage.isEmpty()){
-        message = "No messages yet"
-    } else if (lastMessage.contains("error")){
-        message = "Message from WS Connected"
-    }
-    return message
 }

@@ -16,7 +16,7 @@ class SocketManager {
 
     companion object {
         private const val TAG = "SocketManager"
-        private const val WS_URL = "wss://demo.piesocket.com/v3/channel_123?api_key=VCXCEuvhGcBDP7XhiJJUDvR1e1D3eiVjgZ9VRiaV&notify_self" // ← replace with your real PieHost URL
+        private const val WS_URL = "wss://demo.piesocket.com/v3/channel_123?api_key=VCXCEuvhGcBDP7XhiJJUDvR1e1D3eiVjgZ9VRiaV&notify_self"
     }
 
     private val client = OkHttpClient()
@@ -67,4 +67,6 @@ class SocketManager {
         _connected.value = false
     }
 }
+
+
 

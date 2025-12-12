@@ -1,6 +1,7 @@
 package com.kathayat.netomi.presentation.vm
 
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kathayat.netomi.domain.model.ChatMessage
@@ -33,6 +34,8 @@ class ChatRoomViewModel @Inject constructor(
     private val connectivity = ConnectivityObserver(ctx)
 
     init {
+        Log.d("SoketConnection", "is soket conneted ${repo.isSocketConnected.value}")
+        connectivity.start()
         observeConnectivity()
         observeIncoming()
     }
@@ -45,48 +48,67 @@ class ChatRoomViewModel @Inject constructor(
 
     fun sendMessage(chatId: Int, text: String) {
         viewModelScope.launch {
-            val ok = repo.sendMessage(chatId, "You", text)
-            if (!ok) {
-                _error.emit("Offline")
+            try {
+                val ok = repo.sendMessage(chatId, "You", text,isOnline.value)
+                if (!ok) {
+                    // queued
+                    _error.emit("Message queued (offline).")
+                }
+                loadMessages(chatId)
+            } catch (e: Exception) {
+                _error.emit("Send failed: ${e.localizedMessage}")
             }
-            loadMessages(chatId)
         }
     }
 
     fun retryPending(chatId: Int) {
         viewModelScope.launch {
-            connectivity.start()
-            repo.retryPending()
-            loadMessages(chatId)
+            try {
+                repo.retryPending()
+                loadMessages(chatId)
+            } catch (e: Exception) {
+                _error.emit("Retry failed: ${e.localizedMessage}")
+            }
+        }
+    }
+
+    fun retrySingle(chatId: Int, pendingId: Long) {
+        viewModelScope.launch {
+            try {
+                repo.retrySingleMessage(chatId,pendingId,isOnline.value)
+                loadMessages(chatId)   // <-- refresh UI instantly
+            } catch (e: Exception) {
+                _error.emit("Retry failed: ${e.localizedMessage}")
+            }
         }
     }
 
     fun markAsRead(chatId: Int) {
         viewModelScope.launch {
             repo.markChatAsRead(chatId)
+            loadMessages(chatId)
         }
     }
 
     private fun observeIncoming() {
         viewModelScope.launch {
-            repo.incomingMessages().collect { text ->
-                // TODO: You should parse real chatId from payload
-                val chatId = 1
-
-                repo.saveIncoming(chatId, "Bot", text)
-                loadMessages(chatId)
+            repo.incomingMessages().collect { raw ->
+                // Optionally refresh current chat's messages if relevant
             }
         }
     }
 
     private fun observeConnectivity() {
-        connectivity.start()
         viewModelScope.launch {
             connectivity.isConnected.collect { connected ->
                 _isOnline.value = connected == true
-
                 if (connected == true) {
-                    repo.retryPending()
+                    try {
+                        repo.connectSocket()
+                        repo.retryPending()
+                    } catch (e: Exception) {
+                        _error.emit("Retry failed: ${e.localizedMessage}")
+                    }
                 }
             }
         }

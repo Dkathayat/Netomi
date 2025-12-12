@@ -27,7 +27,8 @@ data class ChatEntity(
     indices = [Index("chatOwnerId")]
 )
 data class MessageEntity(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
     val chatOwnerId: Int,
     val sender: String,
     val message: String,

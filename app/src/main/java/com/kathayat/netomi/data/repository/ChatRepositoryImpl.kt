@@ -10,6 +10,7 @@ import com.kathayat.netomi.domain.model.ChatMessage
 import com.kathayat.netomi.domain.repository.ChatRepository
 import jakarta.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 
@@ -18,46 +19,62 @@ class ChatRepositoryImpl @Inject constructor(
     private val socket: SocketManager
 ) : ChatRepository {
 
-    val isSocketConnected = socket.connected
+    override val isSocketConnected = socket.connected
     override fun incomingMessages(): Flow<String> = socket.incomingFlow
 
     // CREATE / GET / DELETE CHATS
     override suspend fun createChat(chatName: String): Long {
-        val id = dao.insertChat(
-            ChatEntity(chatName = chatName)
-        )
+        val id = dao.insertChat(ChatEntity(chatName = chatName))
         return id
     }
 
+    override fun observeChats(): Flow<List<ChatEntity>> = dao.observeChats()
+
     override suspend fun getAllChats(): List<ChatEntity> = withContext(Dispatchers.IO) {
-        dao.getAllChats().map { chat ->
-            ChatEntity(
-                chatId = chat.chatId,
-                chatName = chat.chatName,
-                lastMessage = chat.lastMessage,
-                lastMessageTime = chat.lastMessageTime,
-                unreadCount = chat.unreadCount
-            )
-        }
+        dao.getAllChats()
     }
 
-    override suspend fun clearChats() {
+    override suspend fun clearChats() = withContext(Dispatchers.IO) {
         dao.clearChats()
+        dao.clearmessages()
+        socket.connect()
     }
 
     // SEND MESSAGES
-    override suspend fun sendMessage(
-        chatId: Int,
-        sender: String,
-        message: String
-    ): Boolean = withContext(Dispatchers.IO) {
-        Log.e("RoomDebug", "sendMessage() chatId = $chatId")
-        val now = System.currentTimeMillis()
+    override suspend fun sendMessage(chatId: Int, sender: String, message: String, isConnected: Boolean): Boolean =
+        withContext(Dispatchers.IO) {
+            Log.e("RoomDebug", "sendMessage() chatId = $chatId")
+            val now = System.currentTimeMillis()
+            val sent = socket.send(message)
+            if (isConnected) {
+                dao.insertMessage(
+                    MessageEntity(
+                        chatOwnerId = chatId,
+                        sender = sender,
+                        message = message,
+                        timestamp = now,
+                        isPending = false,
+                        isUnread = false
+                    )
+                )
+                dao.updateChatPreview(chatId, message, now)
+            } else {
+                dao.addPending(
+                    PendingMessageEntity(
+                        chatOwnerId = chatId,
+                        sender = sender,
+                        message = message,
+                        timestamp = now
+                    )
+                )
+            }
+            sent
+        }
 
-        val sent = socket.send(message)
-
-        if (sent) {
-            // Save message to DB
+    override suspend fun saveIncoming(chatId: Int, sender: String, message: String) =
+        withContext(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            Log.e("RoomDebug", "saveIncoming() chatId = $chatId")
             dao.insertMessage(
                 MessageEntity(
                     chatOwnerId = chatId,
@@ -65,110 +82,87 @@ class ChatRepositoryImpl @Inject constructor(
                     message = message,
                     timestamp = now,
                     isPending = false,
-                    isUnread = false
+                    isUnread = true
                 )
             )
-
-            // Update chat preview
             dao.updateChatPreview(chatId, message, now)
+            dao.incrementUnread(chatId)
+        }
 
-        } else {
-            // Queue message for retry
-            dao.addPending(
-                PendingMessageEntity(
-                    chatOwnerId = chatId,
-                    sender = sender,
-                    message = message,
-                    timestamp = now
-                )
+    override suspend fun getMessages(chatId: Int): List<ChatMessage> = withContext(Dispatchers.IO) {
+        val normal = dao.getMessages(chatId)
+        val pending = dao.getPendingForChat(chatId)
+
+        val normalMapped = normal.map {
+            ChatMessage(it.id, it.sender, it.message, it.timestamp, isPending = false, isUnread = it.isUnread)
+        }
+        val pendingMapped = pending.map {
+            // negative id to avoid colliding with real messages in UI
+            ChatMessage(
+                id = it.id,               // IMPORTANT: use real id
+                sender = it.sender,
+                message = it.message,
+                timestamp = it.timestamp,
+                isPending = true,
+                isUnread = false
             )
         }
-
-        sent
+        (normalMapped + pendingMapped).sortedBy { it.timestamp }
     }
 
-    override suspend fun saveIncoming(
-        chatId: Int,
-        sender: String,
-        message: String
-    ) = withContext(Dispatchers.IO) {
-
-        val now = System.currentTimeMillis()
-
-        dao.insertMessage(
-            MessageEntity(
-                chatOwnerId = chatId,
-                sender = sender,
-                message = message,
-                timestamp = now,
-                isPending = false,
-                isUnread = true
-            )
-        )
-
-        dao.updateChatPreview(chatId, message, now)
-
-        dao.incrementUnread(chatId)
+    override suspend fun markChatAsRead(chatId: Int) = withContext(Dispatchers.IO) {
+        dao.markChatMessagesRead(chatId)
+        dao.resetUnreadCount(chatId)
     }
 
-    // LOAD MESSAGES FOR A CHAT
-
-    override suspend fun getMessages(chatId: Int): List<ChatMessage> =
-        withContext(Dispatchers.IO) {
-            dao.getMessages(chatId).map {
-                ChatMessage(
-                    id = it.id,
-                    sender = it.sender,
-                    message = it.message,
-                    timestamp = it.timestamp,
-                    isUnread = it.isUnread
-                )
-            }
-        }
-
-    // MARK MESSAGES READ --
-    override suspend fun markChatAsRead(chatId: Int) {
-        withContext(Dispatchers.IO) {
-            dao.markChatMessagesRead(chatId)
-            dao.resetUnreadCount(chatId)
-        }
-    }
-
-    // PENDING MESSAGES --
-
+    // PENDING
     override suspend fun retryPending() = withContext(Dispatchers.IO) {
         val pending = dao.getPendingMessages()
-
-        pending.forEach { pendingMsg ->
-
-            val ok = socket.send(pendingMsg.message)
-
+        pending.forEach { p ->
+            val ok = socket.send(p.message)
             if (ok) {
-                dao.deletePending(pendingMsg.id)
+                dao.deletePending(p.id)
                 dao.insertMessage(
                     MessageEntity(
-                        chatOwnerId = pendingMsg.chatOwnerId,
-                        sender = pendingMsg.sender,
-                        message = pendingMsg.message,
-                        timestamp = pendingMsg.timestamp,
+                        chatOwnerId = p.chatOwnerId,
+                        sender = p.sender,
+                        message = p.message,
+                        timestamp = p.timestamp,
                         isPending = false,
                         isUnread = false
                     )
                 )
-
-                dao.updateChatPreview(
-                    pendingMsg.chatOwnerId,
-                    pendingMsg.message,
-                    pendingMsg.timestamp
-                )
+                dao.updateChatPreview(p.chatOwnerId, p.message, p.timestamp)
             }
         }
     }
+
+    override suspend fun retrySingleMessage(chatId: Int, pendingId: Long, isConnected: Boolean) = withContext(Dispatchers.IO) {
+        val pending = dao.getPendingById(pendingId) ?: return@withContext
+        if (isConnected) {
+            dao.deletePending(pendingId)
+            dao.insertMessage(
+                MessageEntity(
+                    chatOwnerId = pending.chatOwnerId,
+                    sender = pending.sender,
+                    message = pending.message,
+                    timestamp = pending.timestamp,
+                    isPending = false,
+                    isUnread = false
+                )
+            )
+
+            dao.updateChatPreview(pending.chatOwnerId, pending.message, pending.timestamp)
+        }
+
+    }
+    override suspend fun deletePendingMessage(pendingId: Long) = withContext(Dispatchers.IO) {
+        dao.deletePending(pendingId)
+    }
+
     // SOCKET CONTROL
     override fun connectSocket() = socket.connect()
-
     override fun closeSocket() = socket.close()
-
     override fun setSocketOffline(simulateOffline: Boolean) {
         socket.simulateOffline = simulateOffline
     }

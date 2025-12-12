@@ -35,20 +35,21 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+//     NOT clear on rotation only if activity is actually finishing
+//     Some devices never call isFinishing correctly so it sometimes
+//     won't delete the chat messages
     override fun onStop() {
         super.onStop()
-        // NOT clear on rotation only if activity is actually finishing
         if (isChangingConfigurations) return
         if (isFinishing) {
-            viewModel.clearAllChatsOnClose()
+            viewModel.clearAllChatsNow()
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        // Some devices never call isFinishing correctly;
         if (!isChangingConfigurations) {
-            viewModel.clearAllChatsOnClose()
+            viewModel.clearAllChatsNow()
         }
     }
 }
