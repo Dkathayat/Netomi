@@ -51,7 +51,6 @@ class ChatRoomViewModel @Inject constructor(
             try {
                 val ok = repo.sendMessage(chatId, "You", text,isOnline.value)
                 if (!ok) {
-                    // queued
                     _error.emit("Message queued (offline).")
                 }
                 loadMessages(chatId)
@@ -93,7 +92,6 @@ class ChatRoomViewModel @Inject constructor(
     private fun observeIncoming() {
         viewModelScope.launch {
             repo.incomingMessages().collect { raw ->
-                // Optionally refresh current chat's messages if relevant
             }
         }
     }

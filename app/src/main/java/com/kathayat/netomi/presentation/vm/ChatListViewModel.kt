@@ -25,7 +25,6 @@ class ChatListViewModel @Inject constructor(
     @ApplicationContext private val ctx: Context
 ) : ViewModel() {
 
-    // Expose a Flow of ChatEntity from DB so UI is reactive
     val chatsFlow: StateFlow<List<ChatEntity>> = repo.observeChats()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -54,7 +53,6 @@ class ChatListViewModel @Inject constructor(
     }
 
     private fun observeIncomingSafe() {
-        // Listen to incoming socket messages and route them to the latest chat (or create one)
         viewModelScope.launch {
             repo.incomingMessages().collect { raw ->
                 try {

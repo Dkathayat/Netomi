@@ -24,7 +24,6 @@ class SocketManager {
     private val incomingChannel = Channel<String>(Channel.BUFFERED)
     val incomingFlow: Flow<String> = incomingChannel.receiveAsFlow()
 
-    // expose connectivity state for UI + retry logic
     private val _connected = MutableStateFlow(false)
     val connected: StateFlow<Boolean> = _connected.asStateFlow()
 

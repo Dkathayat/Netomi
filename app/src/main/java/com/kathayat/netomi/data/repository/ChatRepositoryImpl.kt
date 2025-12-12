@@ -97,9 +97,8 @@ class ChatRepositoryImpl @Inject constructor(
             ChatMessage(it.id, it.sender, it.message, it.timestamp, isPending = false, isUnread = it.isUnread)
         }
         val pendingMapped = pending.map {
-            // negative id to avoid colliding with real messages in UI
             ChatMessage(
-                id = it.id,               // IMPORTANT: use real id
+                id = it.id,
                 sender = it.sender,
                 message = it.message,
                 timestamp = it.timestamp,
